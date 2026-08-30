@@ -1,0 +1,19 @@
+# FAPNet reproduction environment
+# Tested target: Python 3.9, CUDA 11.7
+#
+# Install PyTorch/torchvision FIRST, separately, matching your GPU driver:
+#   pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 \
+#       --extra-index-url https://download.pytorch.org/whl/cu117
+#
+# Then install everything below:
+#   pip install -r requirements.txt
+#
+# Original repo's requirement.txt pinned torch==1.2.0 / python==3.6.6 —
+# that predates the paper (TIP 2022) and is impractical on current GPUs/drivers.
+# This file targets a modern, still-compatible stack instead.
+
+numpy==1.23.5
+opencv-python==4.5.5.64
+scipy==1.9.3
+Pillow==9.4.0
+tqdm==4.65.0
