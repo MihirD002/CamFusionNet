@@ -46,9 +46,9 @@ class MFAM0(nn.Module):
     def forward(self, x):
         
         ###+
-        x1     = x # self.conv_1_1(x)
-        x2     = x # self.conv_1_2(x)
-        x3     = x # self.conv_1_3(x)
+        x1     = self.conv_1_1(x)
+        x2     = self.conv_1_2(x)
+        x3     = self.conv_1_3(x)
         
         x_3_1  = self.relu(self.conv_3_1(x2))  ## (BS, 32, ***, ***)
         x_5_1  = self.relu(self.conv_5_1(x3))  ## (BS, 32, ***, ***)
@@ -171,7 +171,7 @@ class FeaProp(nn.Module):
 ###################################################################      
 
 class FAPNet(nn.Module):
-    # resnet based encoder decoder
+    # convnext based encoder decoder
     def __init__(self, channel=32, opt=None):
         super(FAPNet, self).__init__()
         
@@ -179,15 +179,15 @@ class FAPNet(nn.Module):
         act_fn           = nn.ReLU(inplace=True)
         self.nf          = channel
 
-        self.resnet      = res2net50_v1b_26w_4s(pretrained=True)
+        self.backbone    = models.convnext_tiny(pretrained=True)
         self.downSample  = nn.MaxPool2d(2, stride=2)
         
         ##  
-        self.rf1         = MFAM0(64,  self.nf)
-        self.rf2         = MFAM(256,  self.nf)
-        self.rf3         = MFAM(512,  self.nf)
-        self.rf4         = MFAM(1024, self.nf)
-        self.rf5         = MFAM(2048, self.nf)
+        self.rf1         = MFAM0(96,  self.nf)
+        self.rf2         = MFAM(96,  self.nf)
+        self.rf3         = MFAM(192,  self.nf)
+        self.rf4         = MFAM(384, self.nf)
+        self.rf5         = MFAM(768, self.nf)
         
         
         ##
@@ -211,8 +211,8 @@ class FAPNet(nn.Module):
 
         
         ##
-        self.edge_conv0 = nn.Sequential(nn.Conv2d(64,       self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn) 
-        self.edge_conv1 = nn.Sequential(nn.Conv2d(256,      self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn) 
+        self.edge_conv0 = nn.Sequential(nn.Conv2d(96,       self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn) 
+        self.edge_conv1 = nn.Sequential(nn.Conv2d(96,      self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn) 
         self.edge_conv2 = nn.Sequential(nn.Conv2d(self.nf,  self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn) 
         self.edge_conv3 = BasicConv2d(self.nf,   1,  kernel_size=3, padding=1)
         
@@ -242,16 +242,14 @@ class FAPNet(nn.Module):
     def forward(self, xx):
         
         # ---- feature abstraction -----
-        x   = self.resnet.conv1(xx)
-        x   = self.resnet.bn1(x)
-        x   = self.resnet.relu(x)
+        # ConvNeXt feature extraction
+        features = self.backbone.features
         
-        # - low-level features
-        x1  = self.resnet.maxpool(x)       # (BS, 64, 88, 88)
-        x2  = self.resnet.layer1(x1)       # (BS, 256, 88, 88)
-        x3  = self.resnet.layer2(x2)       # (BS, 512, 44, 44)
-        x4  = self.resnet.layer3(x3)     # (BS, 1024, 22, 22)
-        x5  = self.resnet.layer4(x4)     # (BS, 2048, 11, 11)
+        x1 = features[0](xx)  # stem, 96 channels, (BS, 96, 88, 88)
+        x2 = features[1](x1)  # stage 1, 96 channels, (BS, 96, 88, 88)
+        x3 = features[3](features[2](x2)) # stage 2 downsample + block, 192 channels, (BS, 192, 44, 44)
+        x4 = features[5](features[4](x3)) # stage 3 downsample + block, 384 channels, (BS, 384, 22, 22)
+        x5 = features[7](features[6](x4)) # stage 4 downsample + block, 768 channels, (BS, 768, 11, 11)
         
         ## -------------------------------------- ##
         xf1 = self.rf1(x1)
