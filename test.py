@@ -29,16 +29,16 @@ model.eval()
 ################################################################
 
 for dataset in ['CHAMELEON', 'CAMO', 'COD10K']:
-    
-    save_path = opt.save_path + dataset + '/'
-    os.makedirs(save_path, exist_ok=True)        
-        
-        
-    test_loader = tt_dataset('/test/CamouflagedObjectDection/Dataset/TestDataset/{}/Imgs/'.format(dataset),
-                               '/test/CamouflagedObjectDection/Dataset/TestDataset/{}/GT/'.format(dataset), opt.testsize)
-        
+    save_path = os.path.join(opt.save_path, dataset)
+    os.makedirs(save_path, exist_ok=True)
 
-    
+    test_loader = tt_dataset(
+    os.path.join('data', 'TestDataset', 'TestDataset', dataset, 'Imgs') + os.sep,
+    os.path.join('data', 'TestDataset', 'TestDataset', dataset, 'GT') + os.sep,
+    opt.testsize
+)
+    print(f"[DEBUG] {dataset}: found {test_loader.size} images")
+
     for iteration in range(test_loader.size):
             
             
@@ -57,7 +57,7 @@ for dataset in ['CHAMELEON', 'CAMO', 'COD10K']:
 
         
 ################################################################
-        cv2.imwrite(save_path+name, res*255)
+        cv2.imwrite(os.path.join(save_path, name), res*255)
         
 
 
