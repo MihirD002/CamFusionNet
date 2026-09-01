@@ -238,7 +238,7 @@ class test_dataset:
 
         gt = self.binary_loader(self.gts[self.index])
 
-        name = self.images[self.index].split('/')[-1]
+        name = os.path.basename(self.images[self.index])
 
         image_for_post = self.rgb_loader(self.images[self.index])
         image_for_post = image_for_post.resize(gt.size)
@@ -285,7 +285,7 @@ class tt_dataset:
         image = self.rgb_loader(self.images[self.index])
         image = self.transform(image).unsqueeze(0)
         gt    = self.binary_loader(self.gts[self.index])
-        name  = self.images[self.index].split('/')[-1]
+        name  = os.path.basename(self.images[self.index])
         
         if name.endswith('.jpg'):
             name = name.split('.jpg')[0] + '.png'
