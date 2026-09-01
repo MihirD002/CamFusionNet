@@ -1,3 +1,7 @@
 venv
 data
 results
+lib/__pycache__/model.cpython-310.pyc
+lib/__pycache__/Res2Net_v1b.cpython-310.pyc
+lib/res2net50_v1b_26w_4s-3cf99910.pth
+/utils/__pycache__
