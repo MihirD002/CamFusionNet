@@ -206,7 +206,7 @@ class PolypObjDataset(data.Dataset):
 
 # dataloader for training
 def get_loader(image_root, gt_root, eg_root, batchsize, trainsize,
-               shuffle=True, num_workers=12, pin_memory=True):
+               shuffle=True, num_workers=0, pin_memory=False):
     dataset = PolypObjDataset(image_root, gt_root, eg_root,trainsize)
     data_loader = data.DataLoader(dataset=dataset,
                                   batch_size=batchsize,
