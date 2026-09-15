@@ -14,15 +14,23 @@ import cv2
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--testsize',   type=int, default=352, help='the snapshot input size')
-parser.add_argument('--model_path', type=str, default='./checkpoints/')
+parser.add_argument('--model_path', type=str, default='./Snapshot/FAPNet/FAPNet_best.pth',
+                    help='path to trained model weights (.pth)')
 parser.add_argument('--save_path',  type=str, default='./results/')
 
 opt   = parser.parse_args()
 model = FAPNet(channel=64).cuda()
 
-
-cur_model_path = opt.model_path+'FAPNet.pth'   
-model.load_state_dict(torch.load(cur_model_path))
+# Support both full checkpoints (with model_state_dict key) and raw state dicts
+cur_model_path = opt.model_path
+checkpoint_data = torch.load(cur_model_path, map_location='cuda')
+if isinstance(checkpoint_data, dict) and 'model_state_dict' in checkpoint_data:
+    model.load_state_dict(checkpoint_data['model_state_dict'])
+    print(f"Loaded checkpoint from epoch {checkpoint_data.get('epoch', '?')} "
+          f"(best MAE: {checkpoint_data.get('best_mae', 'N/A')})")
+else:
+    model.load_state_dict(checkpoint_data)
+    print(f"Loaded model weights from: {cur_model_path}")
 model.eval()
         
     
