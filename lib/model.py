@@ -171,24 +171,22 @@ class FeaProp(nn.Module):
 ###################################################################      
 
 class FAPNet(nn.Module):
-    # convnext based encoder decoder
-    def __init__(self, channel=32, opt=None):
+    # resnet based encoder decoder
+    def __init__(self, channel=64, opt=None):
         super(FAPNet, self).__init__()
-        
         
         act_fn           = nn.ReLU(inplace=True)
         self.nf          = channel
 
-        self.backbone    = models.convnext_tiny(pretrained=True)
+        self.resnet      = res2net50_v1b_26w_4s(pretrained=False)
         self.downSample  = nn.MaxPool2d(2, stride=2)
         
         ##  
-        self.rf1         = MFAM0(96,  self.nf)
-        self.rf2         = MFAM(96,  self.nf)
-        self.rf3         = MFAM(192,  self.nf)
-        self.rf4         = MFAM(384, self.nf)
-        self.rf5         = MFAM(768, self.nf)
-        
+        self.rf1         = MFAM0(64,   self.nf)
+        self.rf2         = MFAM(256,  self.nf)
+        self.rf3         = MFAM(512,  self.nf)
+        self.rf4         = MFAM(1024, self.nf)
+        self.rf5         = MFAM(2048, self.nf)
         
         ##
         self.cfusion2    = FeaFusion(self.nf)
@@ -202,26 +200,21 @@ class FAPNet(nn.Module):
         self.cgate3      = FeaProp(self.nf)
         self.cgate2      = FeaProp(self.nf)
         
-        
-        self.de_5        = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn)
-        self.de_4        = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn)
-        self.de_3        = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn)
-        self.de_2        = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn)
-        
-
+        self.de_5        = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
+        self.de_4        = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
+        self.de_3        = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
+        self.de_2        = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
         
         ##
-        self.edge_conv0 = nn.Sequential(nn.Conv2d(96,       self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn) 
-        self.edge_conv1 = nn.Sequential(nn.Conv2d(96,      self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn) 
-        self.edge_conv2 = nn.Sequential(nn.Conv2d(self.nf,  self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn) 
+        self.edge_conv0 = nn.Sequential(nn.Conv2d(64,       self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn) 
+        self.edge_conv1 = nn.Sequential(nn.Conv2d(256,      self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn) 
+        self.edge_conv2 = nn.Sequential(nn.Conv2d(self.nf,  self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn) 
         self.edge_conv3 = BasicConv2d(self.nf,   1,  kernel_size=3, padding=1)
         
-        
-        self.fu_5        = nn.Sequential(nn.Conv2d(self.nf*2, self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn)
-        self.fu_4        = nn.Sequential(nn.Conv2d(self.nf*2, self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn)
-        self.fu_3        = nn.Sequential(nn.Conv2d(self.nf*2, self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn)
-        self.fu_2        = nn.Sequential(nn.Conv2d(self.nf*2, self.nf, kernel_size=3, stride=1, padding=1),nn.BatchNorm2d(self.nf),act_fn)
-        
+        self.fu_5        = nn.Sequential(nn.Conv2d(self.nf*2, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
+        self.fu_4        = nn.Sequential(nn.Conv2d(self.nf*2, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
+        self.fu_3        = nn.Sequential(nn.Conv2d(self.nf*2, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
+        self.fu_2        = nn.Sequential(nn.Conv2d(self.nf*2, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
         
         ##
         self.layer_out5  = nn.Sequential(nn.Conv2d(self.nf, 1,  kernel_size=3, stride=1, padding=1))
@@ -229,27 +222,24 @@ class FAPNet(nn.Module):
         self.layer_out3  = nn.Sequential(nn.Conv2d(self.nf, 1,  kernel_size=3, stride=1, padding=1))
         self.layer_out2  = nn.Sequential(nn.Conv2d(self.nf, 1,  kernel_size=3, stride=1, padding=1))
         
-        
-       
         ##
         self.up_2        = nn.Upsample(scale_factor=2,  mode='bilinear', align_corners=True)
         self.up_4        = nn.Upsample(scale_factor=4,  mode='bilinear', align_corners=True)
         self.up_8        = nn.Upsample(scale_factor=8,  mode='bilinear', align_corners=True)
         self.up_16       = nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
-        
-
 
     def forward(self, xx):
-        
         # ---- feature abstraction -----
-        # ConvNeXt feature extraction
-        features = self.backbone.features
+        x   = self.resnet.conv1(xx)
+        x   = self.resnet.bn1(x)
+        x   = self.resnet.relu(x)
         
-        x1 = features[0](xx)  # stem, 96 channels, (BS, 96, 88, 88)
-        x2 = features[1](x1)  # stage 1, 96 channels, (BS, 96, 88, 88)
-        x3 = features[3](features[2](x2)) # stage 2 downsample + block, 192 channels, (BS, 192, 44, 44)
-        x4 = features[5](features[4](x3)) # stage 3 downsample + block, 384 channels, (BS, 384, 22, 22)
-        x5 = features[7](features[6](x4)) # stage 4 downsample + block, 768 channels, (BS, 768, 11, 11)
+        # - low-level features
+        x1  = self.resnet.maxpool(x)       # (BS, 64, 88, 88)
+        x2  = self.resnet.layer1(x1)       # (BS, 256, 88, 88)
+        x3  = self.resnet.layer2(x2)       # (BS, 512, 44, 44)
+        x4  = self.resnet.layer3(x3)     # (BS, 1024, 22, 22)
+        x5  = self.resnet.layer4(x4)     # (BS, 2048, 11, 11)
         
         ## -------------------------------------- ##
         xf1 = self.rf1(x1)
@@ -258,32 +248,27 @@ class FAPNet(nn.Module):
         xf4 = self.rf4(x4)
         xf5 = self.rf5(x5)
         
-        
         ## edge 
         x21           = self.edge_conv1(x2)
         edge_guidance = self.edge_conv2(self.edge_conv0(x1) + x21)
         edge_out      = self.up_4(self.edge_conv3(edge_guidance))
         
-
         ### layer 5
         en_fusion5   = self.cfusion5(self.up_2(xf5), xf4)              ## (BS, 64, 22, 22)
-        out_gate_fu5 = self.fu_5(torch.cat((en_fusion5, F.interpolate(edge_guidance, scale_factor=1/4, mode='bilinear')),dim=1))
+        out_gate_fu5 = self.fu_5(torch.cat((en_fusion5, F.interpolate(edge_guidance, scale_factor=1/4, mode='bilinear')), dim=1))
         out5         = self.up_16(self.layer_out5(out_gate_fu5))
         
-        
-        de_feature4  = self.de_4(self.up_2(en_fusion5))                       ## (BS, 64, 22, 22)
+        de_feature4  = self.de_4(self.up_2(en_fusion5))                ## (BS, 64, 22, 22)
         en_fusion4   = self.cfusion4(self.up_2(xf4), xf3)              ## (BS, 64, 44, 44)
-        out_gate4    = self.cgate4(en_fusion4, de_feature4) ## (BS, 64, 44, 44) 
-        out_gate_fu4 = self.fu_4(torch.cat((out_gate4, F.interpolate(edge_guidance, scale_factor=1/2, mode='bilinear')),dim=1))
+        out_gate4    = self.cgate4(en_fusion4, de_feature4)            ## (BS, 64, 44, 44) 
+        out_gate_fu4 = self.fu_4(torch.cat((out_gate4, F.interpolate(edge_guidance, scale_factor=1/2, mode='bilinear')), dim=1))
         out4         = self.up_8(self.layer_out4(out_gate_fu4))
-        
         
         de_feature3  = self.de_3(self.up_2(out_gate4))                 ## (BS, 64, 88, 88)
         en_fusion3   = self.cfusion3(self.up_2(xf3), xf2)              ## (BS, 64, 88, 88)
         out_gate3    = self.cgate3(en_fusion3, de_feature3)            ## (BS, 64, 88, 88)  
-        out_gate_fu3 = self.fu_3(torch.cat((out_gate3, edge_guidance),dim=1))
+        out_gate_fu3 = self.fu_3(torch.cat((out_gate3, edge_guidance), dim=1))
         out3         = self.up_4(self.layer_out3(out_gate_fu3))
-        
         
         de_feature2  = self.de_2(self.up_2(out_gate3))                 ## (BS, 64, 176, 176)
         en_fusion2   = self.cfusion2(self.up_2(xf2), self.up_2(xf1))   ## (BS, 64, 176, 176)
@@ -291,8 +276,5 @@ class FAPNet(nn.Module):
         out_gate_fu2 = self.fu_2(torch.cat((out_gate2, self.up_2(edge_guidance)), dim=1))
         out2         = self.up_2(self.layer_out2(out_gate_fu2))
 
-        
         # ---- output ----
         return out5, out4, out3, out2, edge_out
-    
-     

@@ -24,7 +24,8 @@ from lib.model import FAPNet
 
 # Device setup
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-MODEL_PATH = os.path.join('Snapshot', 'FAPNet', 'FAPNet_best.pth')
+# Snapshot/FAPNet/checkpoint_best.pth or Snapshot/FAPNet/FAPNet_best.pth matches the current ConvNeXt architecture
+MODEL_PATH = os.environ.get('MODEL_PATH', os.path.join('Snapshot', 'FAPNet', 'checkpoint_best.pth'))
 TEST_SIZE = 352
 
 print(f"[Server] Initializing FAPNet on {DEVICE}...")
@@ -33,16 +34,31 @@ model = None
 try:
     if os.path.exists(MODEL_PATH):
         model = FAPNet(channel=64).to(DEVICE)
-        state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
+        checkpoint_data = torch.load(MODEL_PATH, map_location=DEVICE)
+        
+        # Handle full training checkpoints (containing model_state_dict, epoch, etc.)
+        if isinstance(checkpoint_data, dict) and 'model_state_dict' in checkpoint_data:
+            state_dict = checkpoint_data['model_state_dict']
+            extra_info = []
+            if 'epoch' in checkpoint_data:
+                extra_info.append(f"epoch: {checkpoint_data['epoch']}")
+            if 'best_mae' in checkpoint_data:
+                extra_info.append(f"best MAE: {checkpoint_data['best_mae']:.4f}")
+            info_str = f" ({', '.join(extra_info)})" if extra_info else ""
+        else:
+            state_dict = checkpoint_data
+            info_str = ""
+            
         model.load_state_dict(state_dict)
         model.eval()
-        print(f"[Server] ✓ Model loaded successfully from {MODEL_PATH}")
+        print(f"[Server] ✓ Model loaded successfully from {MODEL_PATH}{info_str}")
         print(f"[Server] ✓ Device: {DEVICE} | Parameters: {sum(p.numel() for p in model.parameters()):,}")
     else:
         print(f"[Server] ✗ Checkpoint not found at: {os.path.abspath(MODEL_PATH)}")
         print(f"[Server]   Running in canvas-fallback mode (no neural inference).")
 except Exception as e:
     print(f"[Server] ✗ Error loading model: {e}")
+    print(f"[Server]   Note: If using older checkpoints (e.g. checkpoints/FAPNet.pth), ensure backbone architecture matches.")
 
 
 # Preprocessing transform
