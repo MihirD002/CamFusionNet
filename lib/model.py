@@ -131,26 +131,39 @@ class FAPNet(nn.Module):
         Stage 5  (features[5]): 384  channels  [9 blocks]
         Stage 7  (features[7]): 768  channels  [3 blocks]
 
-    These map to rf1..rf5 as follows (matching the trained checkpoints):
-        rf1: 96   (stage-1 — also used for edge branch)
-        rf2: 96   (stage-1 again, shared with edge)
-        rf3: 192  (stage-3)
-        rf4: 384  (stage-5)
-        rf5: 768  (stage-7)
+    Opt-in experiment flags (defaults reproduce the original baseline exactly,
+    including state_dict keys, so old checkpoints load with strict=True):
+
+        boundary_head : 'single'     -> original boundary branch (control)
+                        'multiscale' -> H2: fuses a deeper neighbouring feature
+                                        (stage-2, 192 ch, H/8) into the shallow
+                                        (stage-1, H/4) boundary feature
+        uncertainty   : False -> original 5-tuple output
+                        True  -> H3: adds a spatial uncertainty head
+
+    Output contract:
+        default         : (out5, out4, out3, out2, edge_out)
+        uncertainty=True: (out5, out4, out3, out2, edge_out, logvar)
+    out2 (index 3) is always the final segmentation logit map.
+    `logvar` is a bounded per-pixel log-variance in [-unc_max, unc_max] at full
+    resolution (larger = more uncertain).
     """
 
-    def __init__(self, channel=64, opt=None):
+    def __init__(self, channel=64, opt=None, boundary_head='single',
+                 uncertainty=False, unc_max=2.0):
         super(FAPNet, self).__init__()
+        assert boundary_head in ('single', 'multiscale'), boundary_head
 
         act_fn   = nn.ReLU(inplace=True)
         self.nf  = channel
+        self.boundary_head = boundary_head
+        self.uncertainty   = uncertainty
+        self.unc_max       = unc_max
 
-        # ---- Backbone: ConvNeXt-Base ----
+        # ---- Backbone: ConvNeXt-Tiny (random init; checkpoints supply weights) ----
         self.backbone = models.convnext_tiny(weights=None)
 
         # ---- MFAM modules ----
-        # rf1 & rf2 both take the stage-1 output (96 ch)
-        # rf3 takes stage-3 (192 ch), rf4 stage-5 (384 ch), rf5 stage-7 (768 ch)
         self.rf1  = MFAM(96,  self.nf)
         self.rf2  = MFAM(96,  self.nf)
         self.rf3  = MFAM(192, self.nf)
@@ -176,11 +189,15 @@ class FAPNet(nn.Module):
         self.de_2 = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
 
         # ---- Boundary Guidance Module (BGM) ----
-        # edge_conv0 & edge_conv1 both take 96-ch (stage-1) input
         self.edge_conv0 = nn.Sequential(nn.Conv2d(96,      self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
         self.edge_conv1 = nn.Sequential(nn.Conv2d(96,      self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
         self.edge_conv2 = nn.Sequential(nn.Conv2d(self.nf, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
         self.edge_conv3 = BasicConv2d(self.nf, 1, kernel_size=3, padding=1)
+
+        # ---- H2: optional multi-scale boundary head (created only when requested) ----
+        if self.boundary_head == 'multiscale':
+            self.edge_ms_proj = nn.Sequential(nn.Conv2d(192, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
+            self.edge_ms_fuse = nn.Sequential(nn.Conv2d(self.nf * 2, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
 
         # ---- Fusion of edge guidance into decoder ----
         self.fu_5 = nn.Sequential(nn.Conv2d(self.nf * 2, self.nf, kernel_size=3, stride=1, padding=1), nn.BatchNorm2d(self.nf), act_fn)
@@ -194,6 +211,18 @@ class FAPNet(nn.Module):
         self.layer_out3 = nn.Sequential(nn.Conv2d(self.nf, 1, kernel_size=3, stride=1, padding=1))
         self.layer_out2 = nn.Sequential(nn.Conv2d(self.nf, 1, kernel_size=3, stride=1, padding=1))
 
+        # ---- H3: optional spatial uncertainty head ----
+        if self.uncertainty:
+            self.unc_head = nn.Sequential(
+                nn.Conv2d(self.nf, self.nf // 2, kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm2d(self.nf // 2),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(self.nf // 2, 1, kernel_size=3, stride=1, padding=1))
+            # zero-init the last conv: logvar starts at 0, so the weighted loss
+            # starts identical to the unweighted one
+            nn.init.zeros_(self.unc_head[-1].weight)
+            nn.init.zeros_(self.unc_head[-1].bias)
+
         # ---- Upsamplers ----
         self.up_2  = nn.Upsample(scale_factor=2,  mode='bilinear', align_corners=True)
         self.up_4  = nn.Upsample(scale_factor=4,  mode='bilinear', align_corners=True)
@@ -201,16 +230,7 @@ class FAPNet(nn.Module):
         self.up_16 = nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
 
     def forward(self, xx):
-        # ---- ConvNeXt-Base feature extraction ----
-        # features[0]: stem  (downsample x4)  → (BS, 96, H/4, W/4)
-        # features[1]: stage-1 blocks (3 blocks) → (BS, 96, H/4, W/4)
-        # features[2]: downsample     → (BS, 192, H/8, W/8)
-        # features[3]: stage-2 blocks (3 blocks) → (BS, 192, H/8, W/8)
-        # features[4]: downsample     → (BS, 384, H/16, W/16)
-        # features[5]: stage-3 blocks (9 blocks) → (BS, 384, H/16, W/16)
-        # features[6]: downsample     → (BS, 768, H/32, W/32)
-        # features[7]: stage-4 blocks (3 blocks) → (BS, 768, H/32, W/32)
-
+        # ---- ConvNeXt-Tiny feature extraction ----
         f = self.backbone.features
         x0 = f[0](xx)          # stem          (BS, 96,  H/4,  W/4)
         x1 = f[1](x0)          # stage-1       (BS, 96,  H/4,  W/4)
@@ -221,17 +241,21 @@ class FAPNet(nn.Module):
         x6 = f[6](x5)          # downsample    (BS, 768, H/32, W/32)
         x7 = f[7](x6)          # stage-4       (BS, 768, H/32, W/32)
 
-        # ---- MFAM: multi-scale feature aggregation at each level ----
-        xf1 = self.rf1(x1)     # (BS, 64, H/4,  W/4)   ← stage-1 (96 ch)
-        xf2 = self.rf2(x1)     # (BS, 64, H/4,  W/4)   ← stage-1 again (shared with edge)
-        xf3 = self.rf3(x3)     # (BS, 64, H/8,  W/8)   ← stage-2 (192 ch)
-        xf4 = self.rf4(x5)     # (BS, 64, H/16, W/16)  ← stage-3 (384 ch)
-        xf5 = self.rf5(x7)     # (BS, 64, H/32, W/32)  ← stage-4 (768 ch)
+        # ---- MFAM ----
+        xf1 = self.rf1(x1)
+        xf2 = self.rf2(x1)
+        xf3 = self.rf3(x3)
+        xf4 = self.rf4(x5)
+        xf5 = self.rf5(x7)
 
         # ---- BGM: Boundary Guidance Module ----
-        # Uses the two lowest-level feature maps (both 96-ch, stage-1)
         x21           = self.edge_conv1(x1)                          # (BS, 64, H/4, W/4)
         edge_guidance = self.edge_conv2(self.edge_conv0(x1) + x21)   # (BS, 64, H/4, W/4)
+        if self.boundary_head == 'multiscale':
+            # H2: bring the deeper neighbouring feature (H/8) up to H/4 and fuse
+            deep = self.edge_ms_proj(x3)
+            deep = F.interpolate(deep, size=edge_guidance.shape[2:], mode='bilinear', align_corners=True)
+            edge_guidance = self.edge_ms_fuse(torch.cat((edge_guidance, deep), dim=1))
         edge_out      = self.up_4(self.edge_conv3(edge_guidance))     # (BS, 1,  H,   W)
 
         # ---- Decoder with CFPM (FeaFusion + FeaProp) ----
@@ -254,12 +278,43 @@ class FAPNet(nn.Module):
         out_gate_fu3 = self.fu_3(torch.cat((out_gate3, edge_guidance), dim=1))
         out3         = self.up_4(self.layer_out3(out_gate_fu3))
 
-        ### Layer 2  (H/2 → H)
+        ### Layer 2  (H/2 -> H)
         de_feature2  = self.de_2(self.up_2(out_gate3))
         en_fusion2   = self.cfusion2(self.up_2(xf2), self.up_2(xf1))
         out_gate2    = self.cgate2(en_fusion2, de_feature2)
         out_gate_fu2 = self.fu_2(torch.cat((out_gate2, self.up_2(edge_guidance)), dim=1))
         out2         = self.up_2(self.layer_out2(out_gate_fu2))
 
-        # ---- Output ----
+        if self.uncertainty:
+            raw    = self.up_2(self.unc_head(out_gate_fu2))                 # (BS, 1, H, W)
+            logvar = self.unc_max * torch.tanh(raw / self.unc_max)          # bounded
+            return out5, out4, out3, out2, edge_out, logvar
+
         return out5, out4, out3, out2, edge_out
+
+
+###################################################################
+def load_fapnet(path, device, boundary_head=None, uncertainty=None, strict=True, channel=64):
+    """
+    Build FAPNet and load a checkpoint (raw state_dict or full training checkpoint).
+
+    boundary_head / uncertainty: pass None to infer from the 'config' stored in
+    checkpoints written by the updated train.py (falls back to the baseline:
+    'single' / False for old checkpoints).
+
+    Returns (model, checkpoint_dict_or_empty, (missing_keys, unexpected_keys)).
+    """
+    ckpt    = torch.load(path, map_location=device)
+    is_full = isinstance(ckpt, dict) and 'model_state_dict' in ckpt
+    state   = ckpt['model_state_dict'] if is_full else ckpt
+    cfg     = ckpt.get('config', {}) if is_full else {}
+
+    if boundary_head is None:
+        boundary_head = cfg.get('boundary_head', 'single')
+    if uncertainty is None:
+        uncertainty = cfg.get('uncertainty', 'none') != 'none'
+
+    model  = FAPNet(channel=channel, boundary_head=boundary_head, uncertainty=bool(uncertainty)).to(device)
+    result = model.load_state_dict(state, strict=strict)
+    model.eval()
+    return model, (ckpt if is_full else {}), (list(result.missing_keys), list(result.unexpected_keys))

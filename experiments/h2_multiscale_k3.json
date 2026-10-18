@@ -1,0 +1,5 @@
+{
+  "exp_name": "h2_multiscale_k3",
+  "seed": 42,
+  "boundary_mode": "morph", "boundary_kernel_size": 3, "boundary_head": "multiscale", "uncertainty": "none", "lambda_b": 1.0
+}

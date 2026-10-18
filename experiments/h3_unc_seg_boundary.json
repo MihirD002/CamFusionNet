@@ -1,0 +1,5 @@
+{
+  "exp_name": "h3_unc_seg_boundary",
+  "seed": 42,
+  "boundary_mode": "morph", "boundary_kernel_size": 3, "boundary_head": "multiscale", "uncertainty": "seg_boundary", "lambda_u": 1.0, "lambda_b": 1.0
+}

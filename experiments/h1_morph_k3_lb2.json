@@ -1,0 +1,5 @@
+{
+  "exp_name": "h1_morph_k3_lb2",
+  "seed": 42,
+  "boundary_mode": "morph", "boundary_kernel_size": 3, "boundary_head": "single", "uncertainty": "none", "lambda_b": 2.0
+}

@@ -96,7 +96,7 @@ function App() {
           setCurrentMask(`data:image/png;base64,${data.mask_base64}`);
           setHasCustomMask(true);
           setServerOnline(true);
-          showToast(`✓ FAPNet detected in ${data.inference_time_ms || 120}ms on ${data.device || 'GPU'}`, 'success');
+          showToast(`✓ FAPNet (ConvNeXt)  detected in ${data.inference_time_ms || 120}ms on ${data.device || 'GPU'}`, 'success');
         }
       } else {
         showToast('Inference returned error — check server console', 'warning');

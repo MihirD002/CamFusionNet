@@ -5,6 +5,11 @@ Provides live prediction endpoint for the React UI.
 Endpoints:
   GET  /api/health   -> Status check
   POST /api/predict  -> Runs FAPNet camouflage segmentation on uploaded image
+
+Environment variables:
+  MODEL_PATH     checkpoint to load (default Snapshot/FAPNet/checkpoint_best.pth)
+  BOUNDARY_HEAD  'single' | 'multiscale'  (default: read from checkpoint config, else 'single')
+  UNCERTAINTY    '0' | '1'                (default: read from checkpoint config, else '0')
 """
 
 import os
@@ -20,12 +25,14 @@ import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
 
-from lib.model import FAPNet
+from lib.model import load_fapnet
 
 # Device setup
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# Snapshot/FAPNet/checkpoint_best.pth or Snapshot/FAPNet/FAPNet_best.pth matches the current ConvNeXt architecture
 MODEL_PATH = os.environ.get('MODEL_PATH', os.path.join('Snapshot', 'FAPNet', 'checkpoint_best.pth'))
+BOUNDARY_HEAD = os.environ.get('BOUNDARY_HEAD') or None
+_unc_env = os.environ.get('UNCERTAINTY')
+UNCERTAINTY = None if _unc_env in (None, '') else (_unc_env == '1')
 TEST_SIZE = 352
 
 print(f"[Server] Initializing FAPNet on {DEVICE}...")
@@ -33,32 +40,26 @@ print(f"[Server] Loading checkpoint: {os.path.abspath(MODEL_PATH)}")
 model = None
 try:
     if os.path.exists(MODEL_PATH):
-        model = FAPNet(channel=64).to(DEVICE)
-        checkpoint_data = torch.load(MODEL_PATH, map_location=DEVICE)
-        
-        # Handle full training checkpoints (containing model_state_dict, epoch, etc.)
-        if isinstance(checkpoint_data, dict) and 'model_state_dict' in checkpoint_data:
-            state_dict = checkpoint_data['model_state_dict']
-            extra_info = []
-            if 'epoch' in checkpoint_data:
-                extra_info.append(f"epoch: {checkpoint_data['epoch']}")
-            if 'best_mae' in checkpoint_data:
-                extra_info.append(f"best MAE: {checkpoint_data['best_mae']:.4f}")
-            info_str = f" ({', '.join(extra_info)})" if extra_info else ""
-        else:
-            state_dict = checkpoint_data
-            info_str = ""
-            
-        model.load_state_dict(state_dict)
-        model.eval()
-        print(f"[Server] ✓ Model loaded successfully from {MODEL_PATH}{info_str}")
+        model, ckpt, _ = load_fapnet(MODEL_PATH, DEVICE,
+                                     boundary_head=BOUNDARY_HEAD,
+                                     uncertainty=UNCERTAINTY,
+                                     strict=True)
+        extra_info = []
+        if 'epoch' in ckpt:
+            extra_info.append(f"epoch: {ckpt['epoch']}")
+        if 'best_mae' in ckpt:
+            extra_info.append(f"best MAE: {ckpt['best_mae']:.4f}")
+        extra_info.append(f"boundary_head: {model.boundary_head}")
+        extra_info.append(f"uncertainty: {model.uncertainty}")
+        print(f"[Server] ✓ Model loaded successfully from {MODEL_PATH} ({', '.join(extra_info)})")
         print(f"[Server] ✓ Device: {DEVICE} | Parameters: {sum(p.numel() for p in model.parameters()):,}")
     else:
         print(f"[Server] ✗ Checkpoint not found at: {os.path.abspath(MODEL_PATH)}")
         print(f"[Server]   Running in canvas-fallback mode (no neural inference).")
 except Exception as e:
+    model = None
     print(f"[Server] ✗ Error loading model: {e}")
-    print(f"[Server]   Note: If using older checkpoints (e.g. checkpoints/FAPNet.pth), ensure backbone architecture matches.")
+    print(f"[Server]   Note: set BOUNDARY_HEAD / UNCERTAINTY if the checkpoint was trained with those options.")
 
 
 # Preprocessing transform
@@ -90,7 +91,9 @@ class InferenceHandler(BaseHTTPRequestHandler):
                 'status': 'online',
                 'model_loaded': model is not None,
                 'device': str(DEVICE),
-                'cuda_available': torch.cuda.is_available()
+                'cuda_available': torch.cuda.is_available(),
+                'boundary_head': model.boundary_head if model is not None else None,
+                'uncertainty': model.uncertainty if model is not None else None,
             }
             self.wfile.write(json.dumps(response).encode('utf-8'))
         else:
@@ -130,10 +133,11 @@ class InferenceHandler(BaseHTTPRequestHandler):
                 orig_w, orig_h = pil_img.size
 
                 if model is not None:
-                    # Run PyTorch model
                     tensor_img = img_transform(pil_img).unsqueeze(0).to(DEVICE)
                     with torch.no_grad():
-                        _, _, _, cam, _ = model(tensor_img)
+                        # Output contract: index 3 is always the final segmentation
+                        # logit map, regardless of optional boundary/uncertainty outputs.
+                        cam = model(tensor_img)[3]
                         res = F.interpolate(cam, size=(orig_h, orig_w), mode='bilinear', align_corners=False)
                         res = res.sigmoid().data.cpu().numpy().squeeze()
                         res = (res - res.min()) / (res.max() - res.min() + 1e-8)
