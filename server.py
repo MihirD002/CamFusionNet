@@ -5,6 +5,11 @@ Provides live prediction endpoint for the React UI.
 Endpoints:
   GET  /api/health   -> Status check
   POST /api/predict  -> Runs FAPNet camouflage segmentation on uploaded image
+
+Environment variables:
+  MODEL_PATH    checkpoint to load (default: Snapshot/FAPNet/checkpoint_best.pth)
+  MFAM_VARIANT  MFAM variant matching MODEL_PATH: original (default), depthwise,
+                dilated, factorized, combined
 """
 
 import os
@@ -20,45 +25,46 @@ import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
 
-from lib.model import FAPNet
+from lib.model import FAPNet, MFAM_VARIANTS
+from utils.checkpoint import load_model_weights
 
 # Device setup
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Snapshot/FAPNet/checkpoint_best.pth or Snapshot/FAPNet/FAPNet_best.pth matches the current ConvNeXt architecture
 MODEL_PATH = os.environ.get('MODEL_PATH', os.path.join('Snapshot', 'FAPNet', 'checkpoint_best.pth'))
+MFAM_VARIANT = os.environ.get('MFAM_VARIANT', 'original').strip().lower()
 TEST_SIZE = 352
 
-print(f"[Server] Initializing FAPNet on {DEVICE}...")
+print(f"[Server] Initializing FAPNet ({MFAM_VARIANT} MFAM) on {DEVICE}...")
 print(f"[Server] Loading checkpoint: {os.path.abspath(MODEL_PATH)}")
 model = None
 try:
+    if MFAM_VARIANT not in MFAM_VARIANTS:
+        raise ValueError(f"Unknown MFAM_VARIANT '{MFAM_VARIANT}'. Valid: {', '.join(MFAM_VARIANTS)}")
     if os.path.exists(MODEL_PATH):
-        model = FAPNet(channel=64).to(DEVICE)
-        checkpoint_data = torch.load(MODEL_PATH, map_location=DEVICE)
-        
-        # Handle full training checkpoints (containing model_state_dict, epoch, etc.)
-        if isinstance(checkpoint_data, dict) and 'model_state_dict' in checkpoint_data:
-            state_dict = checkpoint_data['model_state_dict']
-            extra_info = []
-            if 'epoch' in checkpoint_data:
-                extra_info.append(f"epoch: {checkpoint_data['epoch']}")
-            if 'best_mae' in checkpoint_data:
-                extra_info.append(f"best MAE: {checkpoint_data['best_mae']:.4f}")
-            info_str = f" ({', '.join(extra_info)})" if extra_info else ""
-        else:
-            state_dict = checkpoint_data
-            info_str = ""
-            
-        model.load_state_dict(state_dict)
+        model = FAPNet(channel=64, mfam_variant=MFAM_VARIANT).to(DEVICE)
+
+        # Handles full training checkpoints and raw state dicts, and raises a clear
+        # error when the checkpoint was trained with a different MFAM variant.
+        meta = load_model_weights(model, MODEL_PATH, MFAM_VARIANT, device=DEVICE)
+        extra_info = []
+        if 'epoch' in meta:
+            extra_info.append(f"epoch: {meta['epoch']}")
+        if 'best_mae' in meta:
+            extra_info.append(f"best MAE: {meta['best_mae']:.4f}")
+        info_str = f" ({', '.join(extra_info)})" if extra_info else ""
+
         model.eval()
         print(f"[Server] ✓ Model loaded successfully from {MODEL_PATH}{info_str}")
-        print(f"[Server] ✓ Device: {DEVICE} | Parameters: {sum(p.numel() for p in model.parameters()):,}")
+        print(f"[Server] ✓ Device: {DEVICE} | MFAM: {MFAM_VARIANT} | Parameters: {sum(p.numel() for p in model.parameters()):,}")
     else:
         print(f"[Server] ✗ Checkpoint not found at: {os.path.abspath(MODEL_PATH)}")
         print(f"[Server]   Running in canvas-fallback mode (no neural inference).")
 except Exception as e:
+    model = None
     print(f"[Server] ✗ Error loading model: {e}")
-    print(f"[Server]   Note: If using older checkpoints (e.g. checkpoints/FAPNet.pth), ensure backbone architecture matches.")
+    print(f"[Server]   Note: set MFAM_VARIANT to the variant the checkpoint was trained with; "
+          f"older checkpoints (e.g. checkpoints/FAPNet.pth) must also match the backbone architecture.")
 
 
 # Preprocessing transform
@@ -89,6 +95,7 @@ class InferenceHandler(BaseHTTPRequestHandler):
             response = {
                 'status': 'online',
                 'model_loaded': model is not None,
+                'mfam_variant': MFAM_VARIANT,
                 'device': str(DEVICE),
                 'cuda_available': torch.cuda.is_available()
             }
@@ -160,6 +167,7 @@ class InferenceHandler(BaseHTTPRequestHandler):
                     'status': 'success',
                     'inference_time_ms': elapsed_ms,
                     'device': str(DEVICE),
+                    'mfam_variant': MFAM_VARIANT,
                     'width': orig_w,
                     'height': orig_h,
                     'mask_base64': mask_b64

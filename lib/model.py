@@ -4,6 +4,17 @@ import torch.nn.functional as F
 import torchvision.models as models
 
 
+MFAM_VARIANTS = ('original', 'depthwise', 'dilated', 'factorized', 'combined')
+
+
+def validate_mfam_variant(variant):
+    """Raise a clear ValueError if `variant` is not a known MFAM variant."""
+    if variant not in MFAM_VARIANTS:
+        raise ValueError(
+            "Unknown MFAM variant '{}'. Valid choices: {}.".format(variant, ', '.join(MFAM_VARIANTS)))
+    return variant
+
+
 class BasicConv2d(nn.Module):
     def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1):
         super(BasicConv2d, self).__init__()
@@ -21,10 +32,22 @@ class BasicConv2d(nn.Module):
 
 ###################################################################
 class MFAM(nn.Module):
-    """Multi-scale Feature Aggregation Module"""
+    """Multi-scale Feature Aggregation Module
 
-    def __init__(self, in_channels, out_channels):
+    Supports five MFAM_VARIANTS that swap only the four spatial
+    branch convolutions (conv_3_1, conv_3_2, conv_5_1, conv_5_2).
+    The branch/fusion topology, the post-fusion conv_1_5, the 1x1
+    projection convolutions (conv_1_{1-4}), the feature dimensions,
+    and the five-output contract of FAPNet are all unchanged.
+
+    variant='original' (default) reproduces the existing architecture
+    and state-dict layout exactly so current checkpoints load without
+    any key renaming.
+    """
+
+    def __init__(self, in_channels, out_channels, variant='original'):
         super(MFAM, self).__init__()
+        self.variant = validate_mfam_variant(variant)
 
         self.relu = nn.ReLU(inplace=True)
 
@@ -34,11 +57,71 @@ class MFAM(nn.Module):
         self.conv_1_4 = BasicConv2d(in_channels, out_channels, 1)
         self.conv_1_5 = BasicConv2d(out_channels, out_channels, 3, stride=1, padding=1)
 
-        self.conv_3_1 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.conv_3_2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        if variant == 'original':
+            self.conv_3_1 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+            self.conv_3_2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+            self.conv_5_1 = nn.Conv2d(out_channels, out_channels, kernel_size=5, stride=1, padding=2)
+            self.conv_5_2 = nn.Conv2d(out_channels, out_channels, kernel_size=5, stride=1, padding=2)
 
-        self.conv_5_1 = nn.Conv2d(out_channels, out_channels, kernel_size=5, stride=1, padding=2)
-        self.conv_5_2 = nn.Conv2d(out_channels, out_channels, kernel_size=5, stride=1, padding=2)
+        elif variant == 'depthwise':
+            # Depthwise-separable: depthwise conv (no bias) + 1x1 pointwise (with bias)
+            self.conv_3_1 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, groups=out_channels, bias=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True),
+            )
+            self.conv_3_2 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, groups=out_channels, bias=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True),
+            )
+            self.conv_5_1 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=5, padding=2, groups=out_channels, bias=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True),
+            )
+            self.conv_5_2 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=5, padding=2, groups=out_channels, bias=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True),
+            )
+
+        elif variant == 'dilated':
+            # 3x3 branches stay standard; 5x5 branches become dilated 3x3 (dilation=2, same receptive field)
+            self.conv_3_1 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+            self.conv_3_2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+            self.conv_5_1 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=2, dilation=2)
+            self.conv_5_2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=2, dilation=2)
+
+        elif variant == 'factorized':
+            # 3x3 branches stay standard; 5x5 factorized into 1x5 followed by 5x1
+            self.conv_3_1 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+            self.conv_3_2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+            self.conv_5_1 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=(1, 5), padding=(0, 2)),
+                nn.Conv2d(out_channels, out_channels, kernel_size=(5, 1), padding=(2, 0)),
+            )
+            self.conv_5_2 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=(1, 5), padding=(0, 2)),
+                nn.Conv2d(out_channels, out_channels, kernel_size=(5, 1), padding=(2, 0)),
+            )
+
+        elif variant == 'combined':
+            # 3x3 branches: depthwise-separable 3x3; 5x5 branches: depthwise-separable dilated 3x3
+            self.conv_3_1 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, groups=out_channels, bias=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True),
+            )
+            self.conv_3_2 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, groups=out_channels, bias=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True),
+            )
+            self.conv_5_1 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=2, dilation=2,
+                          groups=out_channels, bias=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True),
+            )
+            self.conv_5_2 = nn.Sequential(
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=2, dilation=2,
+                          groups=out_channels, bias=False),
+                nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=True),
+            )
 
     def forward(self, x):
         x1    = self.conv_1_1(x)
@@ -137,13 +220,17 @@ class FAPNet(nn.Module):
         rf3: 192  (stage-3)
         rf4: 384  (stage-5)
         rf5: 768  (stage-7)
+
+    mfam_variant: one of MFAM_VARIANTS. 'original' (default) reproduces the
+    existing architecture and state-dict layout exactly.
     """
 
-    def __init__(self, channel=64, opt=None):
+    def __init__(self, channel=64, opt=None, mfam_variant='original'):
         super(FAPNet, self).__init__()
 
         act_fn   = nn.ReLU(inplace=True)
         self.nf  = channel
+        self.mfam_variant = validate_mfam_variant(mfam_variant)
 
         # ---- Backbone: ConvNeXt-Base ----
         self.backbone = models.convnext_tiny(weights=None)
@@ -151,11 +238,11 @@ class FAPNet(nn.Module):
         # ---- MFAM modules ----
         # rf1 & rf2 both take the stage-1 output (96 ch)
         # rf3 takes stage-3 (192 ch), rf4 stage-5 (384 ch), rf5 stage-7 (768 ch)
-        self.rf1  = MFAM(96,  self.nf)
-        self.rf2  = MFAM(96,  self.nf)
-        self.rf3  = MFAM(192, self.nf)
-        self.rf4  = MFAM(384, self.nf)
-        self.rf5  = MFAM(768, self.nf)
+        self.rf1  = MFAM(96,  self.nf, mfam_variant)
+        self.rf2  = MFAM(96,  self.nf, mfam_variant)
+        self.rf3  = MFAM(192, self.nf, mfam_variant)
+        self.rf4  = MFAM(384, self.nf, mfam_variant)
+        self.rf5  = MFAM(768, self.nf, mfam_variant)
 
         # ---- Cross-level Fusion (FeaFusion) ----
         self.cfusion2 = FeaFusion(self.nf)

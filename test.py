@@ -5,10 +5,9 @@ import os
 import argparse
 
 
-from lib.model import FAPNet
+from lib.model import FAPNet, MFAM_VARIANTS
 from utils.dataloader import tt_dataset
-from utils.eva_funcs import eval_Smeasure,eval_mae,numpy2tensor
-import scipy.io as scio 
+from utils.checkpoint import load_model_weights
 import cv2
 
 
@@ -16,35 +15,43 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--testsize',   type=int, default=352, help='the snapshot input size')
 parser.add_argument('--model_path', type=str, default='./Snapshot/FAPNet/FAPNet_best.pth',
                     help='path to trained model weights (.pth)')
-parser.add_argument('--save_path',  type=str, default='./results/')
+parser.add_argument('--mfam_variant', type=str, default='original', choices=MFAM_VARIANTS,
+                    help='MFAM variant the checkpoint was trained with (default: original)')
+parser.add_argument('--save_path',  type=str, default=None,
+                    help="prediction output dir (default: ./results/ for 'original', "
+                         "./results_<variant>/ otherwise)")
+parser.add_argument('--data_root',  type=str, default=os.path.join('data', 'TestDataset', 'TestDataset'),
+                    help='folder containing <DATASET>/Imgs and <DATASET>/GT')
+parser.add_argument('--datasets',   type=str, nargs='+', default=['CHAMELEON', 'CAMO', 'COD10K'])
 
 opt   = parser.parse_args()
-model = FAPNet(channel=64).cuda()
+if opt.save_path is None:
+    opt.save_path = './results/' if opt.mfam_variant == 'original' else './results_{}/'.format(opt.mfam_variant)
 
-# Support both full checkpoints (with model_state_dict key) and raw state dicts
-cur_model_path = opt.model_path
-checkpoint_data = torch.load(cur_model_path, map_location='cuda')
-if isinstance(checkpoint_data, dict) and 'model_state_dict' in checkpoint_data:
-    model.load_state_dict(checkpoint_data['model_state_dict'])
-    print(f"Loaded checkpoint from epoch {checkpoint_data.get('epoch', '?')} "
-          f"(best MAE: {checkpoint_data.get('best_mae', 'N/A')})")
+model = FAPNet(channel=64, mfam_variant=opt.mfam_variant).cuda()
+
+# Supports full checkpoints (model_state_dict key) and raw state dicts; raises a clear
+# error if the checkpoint was trained with a different MFAM variant.
+meta = load_model_weights(model, opt.model_path, opt.mfam_variant, device='cuda')
+if meta:
+    print(f"Loaded checkpoint from epoch {meta.get('epoch', '?')} "
+          f"(best MAE: {meta.get('best_mae', 'N/A')}, MFAM variant: {opt.mfam_variant})")
 else:
-    model.load_state_dict(checkpoint_data)
-    print(f"Loaded model weights from: {cur_model_path}")
+    print(f"Loaded model weights from: {opt.model_path} (MFAM variant: {opt.mfam_variant})")
 model.eval()
         
     
 ################################################################
 
-for dataset in ['CHAMELEON', 'CAMO', 'COD10K']:
+for dataset in opt.datasets:
     save_path = os.path.join(opt.save_path, dataset)
     os.makedirs(save_path, exist_ok=True)
 
     test_loader = tt_dataset(
-    os.path.join('data', 'TestDataset', 'TestDataset', dataset, 'Imgs') + os.sep,
-    os.path.join('data', 'TestDataset', 'TestDataset', dataset, 'GT') + os.sep,
-    opt.testsize
-)
+        os.path.join(opt.data_root, dataset, 'Imgs') + os.sep,
+        os.path.join(opt.data_root, dataset, 'GT') + os.sep,
+        opt.testsize
+    )
     print(f"[DEBUG] {dataset}: found {test_loader.size} images")
 
     for iteration in range(test_loader.size):
@@ -57,16 +64,14 @@ for dataset in ['CHAMELEON', 'CAMO', 'COD10K']:
         image = image.cuda()
             
 
-        _,_,_, cam,_ = model(image)
+        with torch.no_grad():
+            _,_,_, cam,_ = model(image)
             
-        res = F.upsample(cam, size=gt.shape, mode='bilinear', align_corners=False)
+        res = F.interpolate(cam, size=gt.shape, mode='bilinear', align_corners=False)
         res = res.sigmoid().data.cpu().numpy().squeeze()
         res = (res - res.min()) / (res.max() - res.min() + 1e-8)
 
         
 ################################################################
-        cv2.imwrite(os.path.join(save_path, name), res*255)
-        
-
-
- 
+        # Round to uint8 (cv2.imwrite on float truncates) so the saved map is what gets evaluated.
+        cv2.imwrite(os.path.join(save_path, name), np.uint8(np.round(res * 255)))

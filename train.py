@@ -1,6 +1,7 @@
 
 import torch
 import os
+import random
 import numpy as np
 import torch.nn.functional as F
 import argparse
@@ -10,9 +11,10 @@ from torch.cuda.amp import autocast, GradScaler
 # Ensure cuDNN benchmark is False so it doesn't allocate huge workspaces to benchmark algorithms
 torch.backends.cudnn.benchmark = False
 
-from lib.model import FAPNet
+from lib.model import FAPNet, MFAM_VARIANTS
 from utils.dataloader import get_loader,test_dataset
 from utils.trainer import adjust_lr
+from utils.checkpoint import check_variant_compat, extract_state_dict, write_run_config
 from datetime import datetime
 
 
@@ -20,7 +22,15 @@ best_mae   = 1
 best_epoch = 0
 
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
 def structure_loss(pred, mask):
+    # NOTE: left exactly as in the baseline so every MFAM variant trains with the same loss.
     weit  = 1+5*torch.abs(F.avg_pool2d(mask, kernel_size=31, stride=1, padding=15)-mask)
     wbce  = F.binary_cross_entropy_with_logits(pred, mask, reduce='none')
     wbce  = (weit*wbce).sum(dim=(2,3))/weit.sum(dim=(2,3))
@@ -106,6 +116,8 @@ def train(train_loader, model, optimizer, epoch, opt, loss_func, total_step, sca
             'optimizer_state_dict': optimizer.state_dict(),
             'best_mae': best_mae,
             'best_epoch': best_epoch,
+            'mfam_variant': opt.mfam_variant,
+            'config': vars(opt),
         }
         torch.save(checkpoint, os.path.join(save_path, 'checkpoint_epoch_%d.pth' % (epoch)))
         torch.save(checkpoint, os.path.join(save_path, 'checkpoint_latest.pth'))
@@ -147,13 +159,14 @@ def test(test_loader, model, epoch, save_path, optimizer=None):
                     'optimizer_state_dict': optimizer.state_dict(),
                     'best_mae': best_mae,
                     'best_epoch': best_epoch,
+                    'mfam_variant': opt.mfam_variant,
                 }
                 torch.save(checkpoint, os.path.join(save_path, 'checkpoint_best.pth'))
             print('best epoch:{}'.format(epoch))
             
         logging.info('#TEST#:Epoch:{} MAE:{} bestEpoch:{} bestMAE:{}'.format(epoch,mae,best_epoch,best_mae))
                 
-                
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -175,7 +188,12 @@ if __name__ == "__main__":
                         help='choose which gpu you use')
     parser.add_argument('--save_epoch', type=int, default=5,
                         help='every N epochs save your trained snapshot')
-    parser.add_argument('--save_model', type=str, default='./Snapshot/FAPNet/')
+    parser.add_argument('--save_model', type=str, default=None,
+                        help='snapshot output directory (default: ./Snapshot/FAPNet/ or ./Snapshot/FAPNet_<variant>/)')
+    parser.add_argument('--mfam_variant', type=str, default='original', choices=MFAM_VARIANTS,
+                        help='MFAM variant to train (default: original — reproduces baseline)')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='random seed for reproducibility (default: None = not seeded)')
     
     default_train_img = './data/TrainDataset/TrainDataset/Imgs/' if os.path.exists('./data/TrainDataset/TrainDataset/Imgs/') else './data/TrainDataset/Imgs/'
     default_train_gt  = './data/TrainDataset/TrainDataset/GT/'   if os.path.exists('./data/TrainDataset/TrainDataset/GT/')   else './data/TrainDataset/GT/'
@@ -204,24 +222,35 @@ if __name__ == "__main__":
     
     opt = parser.parse_args()
 
+    if opt.save_model is None:
+        opt.save_model = './Snapshot/FAPNet/' if opt.mfam_variant == 'original' \
+            else './Snapshot/FAPNet_{}/'.format(opt.mfam_variant)
+
     torch.cuda.set_device(opt.gpu)
+
+    if opt.seed is not None:
+        set_seed(opt.seed)
     
     ## log
 
     save_path = opt.save_model
     os.makedirs(save_path, exist_ok=True)
+    run_config = dict(vars(opt))
+    write_run_config(save_path, opt.mfam_variant, run_config)
     
     
     logging.basicConfig(filename=opt.save_model+'/log.log',format='[%(asctime)s-%(filename)s-%(levelname)s:%(message)s]', level = logging.INFO,filemode='a',datefmt='%Y-%m-%d %I:%M:%S %p')
     logging.info("COD-Train")
     logging.info("Config")
-    logging.info('epoch:{};lr:{};batchsize:{};trainsize:{};clip:{};decay_rate:{};save_path:{};decay_epoch:{};resume:{};start_epoch:{}'.format(
-        opt.epoch, opt.lr, opt.batchsize, opt.trainsize, opt.clip, opt.decay_rate, opt.save_model, opt.decay_epoch, opt.resume, opt.start_epoch))
+    logging.info('epoch:{};lr:{};batchsize:{};trainsize:{};clip:{};decay_rate:{};save_path:{};decay_epoch:{};resume:{};start_epoch:{};mfam_variant:{};seed:{};amp:{}'.format(
+        opt.epoch, opt.lr, opt.batchsize, opt.trainsize, opt.clip, opt.decay_rate, opt.save_model, opt.decay_epoch, opt.resume, opt.start_epoch,
+        opt.mfam_variant, opt.seed, opt.amp))
+    logging.info('full_config:{}'.format(run_config))
 
     
 
     #
-    model     = FAPNet(channel=64).cuda()
+    model     = FAPNet(channel=64, mfam_variant=opt.mfam_variant).cuda()
     optimizer = torch.optim.Adam(model.parameters(), opt.lr)
     LogitsBCE = torch.nn.BCEWithLogitsLoss()
 
@@ -239,6 +268,13 @@ if __name__ == "__main__":
             print(f"=> Loading checkpoint '{opt.resume}'")
             logging.info(f"=> Loading checkpoint '{opt.resume}'")
             checkpoint = torch.load(opt.resume, map_location='cuda')
+
+            # Reject architecture mismatches with a clear error before touching the model.
+            from utils.checkpoint import read_sidecar_variant
+            _state, _meta = extract_state_dict(checkpoint)
+            _meta_variant = _meta.get('mfam_variant') if isinstance(_meta, dict) else None
+            check_variant_compat(_state, opt.mfam_variant, opt.resume,
+                                 _meta_variant or read_sidecar_variant(opt.resume))
 
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
                 model.load_state_dict(checkpoint['model_state_dict'])
@@ -302,9 +338,9 @@ if __name__ == "__main__":
     
     print('--------------------starting-------------------')
 
-    print('-' * 30, "\n[Training Dataset INFO]\nimg_dir: {}\ngt_dir: {}\nLearning Rate: {}\nBatch Size: {}\n"
+    print('-' * 30, "\n[Training Dataset INFO]\nimg_dir: {}\ngt_dir: {}\nMFAM variant: {}\nSeed: {}\nLearning Rate: {}\nBatch Size: {}\n"
                     "Training Save: {}\ntotal_num: {}\nStarting Epoch: {}\nTotal Epochs: {}\n".format(
-                        opt.train_img_dir, opt.train_gt_dir, opt.lr, opt.batchsize, opt.save_model, total_step, start_epoch, opt.epoch), '-' * 30)
+                        opt.train_img_dir, opt.train_gt_dir, opt.mfam_variant, opt.seed, opt.lr, opt.batchsize, opt.save_model, total_step, start_epoch, opt.epoch), '-' * 30)
 
     for epoch_iter in range(start_epoch, opt.epoch + 1):
         
