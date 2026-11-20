@@ -1,141 +1,275 @@
-# Feature Aggregation and Propagation Network for Camouflaged Object Detection
+# CamFusionNet
 
-> **Authors:** 
-> [*Tao Zhou*](https://taozh2017.github.io),
-> [*Yi Zhou*](https://cse.seu.edu.cn/2021/0303/c23024a362239/page.htm),
-> [*Chen Gong*](https://gcatnjust.github.io/ChenGong/index.html),
-> [*Jian Yang*](https://scholar.google.com.hk/citations?user=6CIDtZQAAAAJ&hl=zh-CN),
-> and [*Yu Zhang*](https://scholar.google.com.hk/citations?user=oDrTEi0AAAAJ&hl=zh-CN).
+CamFusionNet is an FAP-Net-based implementation for Camouflaged Object Detection (COD). It provides multiple Multi-scale Feature Aggregation Module (MFAM) variants, training and testing scripts, evaluation utilities, efficiency benchmarks, checkpoint compatibility checks, and a React/Vite visualization interface.
 
+**Developers**
 
+- Ajaymohan Kanojia
+- Mihir Deshmukh
 
-## 1. Preface
+> **Research lineage:** The implementation builds on the IEEE TIP 2022 FAP-Net paper by Tao Zhou, Yi Zhou, Chen Gong, Jian Yang, and Yu Zhang.
 
-- This repository provides code for "_**Feature Aggregation and Propagation Network for Camouflaged Object Detection**_" IEEE TIP 2022. [Paper](https://ieeexplore.ieee.org/abstract/document/9940173/) [![Arxiv Page](https://img.shields.io/badge/Arxiv-2105.12555-red?style=flat-square)](https://arxiv.org/pdf/2212.00990.pdf)
+## Overview
 
+Camouflaged object detection identifies objects that blend visually with their surroundings. This project reproduces the FAP-Net framework and modifies the MFAM spatial branch operations to compare three variants:
 
-## 2. Overview
+| Variant | Branch design |
+|---|---|
+| `original` | Standard 3 × 3 and 5 × 5 spatial convolutions |
+| `depthwise` | Depthwise-separable 3 × 3 and 5 × 5 convolutions |
+| `dilated` | Standard 3 × 3 branches and 3 × 3 dilated branches |
 
-### 2.1. Introduction
+All variants preserve the remaining FAP-Net topology and return the five-model-output contract used by the training and inference code.
 
-Camouflaged object detection (COD) aims to detect/segment camouflaged objects embedded in the environment, which has attracted increasing attention over the past decades.
-Although several COD methods have been developed, they still suffer from unsatisfactory performance due to the intrinsic similarities between the foreground objects and background surroundings. In this paper, we propose a novel Feature Aggregation
-and Propagation Network (FAP-Net) for camouflaged object detection. Specifically, we propose a Boundary Guidance Module (BGM) to explicitly model the boundary characteristic, which can provide boundary-enhanced features to boost the COD performance. To capture the scale variations of the camouflaged objects, we propose a Multi-scale Feature Aggregation Module (MFAM) to characterize the multi-scale information from
-each layer and obtain the aggregated feature representations. Furthermore, we propose a Cross-level Fusion and Propagation Module (CFPM). In the CFPM, the feature fusion part can effectively integrate the features from adjacent layers to exploit the cross-level correlations, and the feature propagation part can transmit valuable context information from the encoder to the decoder network via a gate unit. Finally, we formulate a unified
-and end-to-end trainable framework where cross-level features can be effectively fused and propagated for capturing rich context information. Extensive experiments on three benchmark camouflaged datasets demonstrate that our FAP-Net outperforms other state-of-the-art COD models. Moreover, our model can be extended to the polyp segmentation task, and the comparison
-results further validate the effectiveness of the proposed model in segmenting polyps.
+## Implementation Note
 
+The checked-in implementation uses a **ConvNeXt-Tiny backbone** from `torchvision.models` rather than the original Res2Net-50 backbone. The [model implementation](lib/model.py) documents this change explicitly. Backbones and checkpoints are therefore not interchangeable with the original FAP-Net model without matching the architecture.
 
-### 2.2. Framework Overview
+## Architecture
 
-<p align="center">
-    <img src="imgs/fapnet.png"/> <br />
-    <em> 
-    Figure 1: The overall architecture of the proposed FAP-Net, consisting of three key components, i.e., boundary guidance module, multi-scale feature aggregation module, and cross-level fusion and propagation module.
-    </em>
-</p>
-
-### 2.3. Qualitative Results
+- **Boundary Guidance Module (BGM):** extracts boundary-enhanced features and supervises edge prediction.
+- **Multi-scale Feature Aggregation Module (MFAM):** combines complementary spatial representations while preserving residual feature information.
+- **Cross-level Fusion and Propagation Module (CFPM):** fuses adjacent feature levels and uses gated propagation to transfer encoder context to the decoder.
 
 <p align="center">
-    <img src="imgs/results.png"/> <br />
-    <em> 
-    Figure 2: Qualitative Results.
-    </em>
+  <img src="imgs/fapnet.png" alt="FAP-Net architecture" width="850"><br>
+  <em>Overall FAP-Net architecture.</em>
 </p>
 
-## 3. Proposed Method
+<p align="center">
+  <img src="imgs/results.png" alt="Qualitative segmentation results" width="850"><br>
+  <em>Qualitative prediction results.</em>
+</p>
 
-### 3.1. Training/Testing
+## Repository Structure
 
-The training and testing experiments are conducted using [PyTorch](https://github.com/pytorch/pytorch) with one NVIDIA Tesla P40 GPU of 24 GB Memory.
-
-1. Configuring your environment (Prerequisites):
-       
-    + Installing necessary packages: `pip install -r requirements.txt`.
-
-1. Downloading necessary data:
-
-
-    + downloading training dataset and move it into `./data/`, 
-    which can be found from [Google Drive](https://drive.google.com/file/d/1Kifp7I0n9dlWKXXNIbN7kgyokoRY4Yz7/view?usp=sharing) or [Baidu Drive](https://pan.baidu.com/s/1uyQz0b_r_5yCee0orSw7EA) (extraction code: fapn). 
-
-    + downloading testing dataset and move it into `./data/`, 
-    which can be found from [Google Drive](https://drive.google.com/file/d/1SLRB5Wg1Hdy7CQ74s3mTQ3ChhjFRSFdZ/view?usp=sharing) or [Baidu Drive](https://pan.baidu.com/s/1F3tVEWYzKYp5NBv3cjiaAg) (extraction code: fapn). 
-        
-    + downloading our weights and move it into `./checkpoints/FAPNet.pth`, 
-    which can be found from [Google Drive](https://drive.google.com/file/d/1qjb70ZGwExei21x6uMQbUAwZ0Ts4Z-xk/view?usp=share_link) or [(Baidu Drive)](https://pan.baidu.com/s/1BeRx81XNKq_jA7LHut1VZg) (extraction code: fapn). .
-    
-    + downloading Res2Net weights and move it into `./lib/res2net50_v1b_26w_4s-3cf99910.pth`,
-    which can be found from [Google Drive](https://drive.google.com/file/d/1_1N-cx1UpRQo7Ybsjno1PAg4KE1T9e5J/view?usp=sharing) or [Baidu Drive](https://pan.baidu.com/s/1gDNNh7Cad3jv2l7i4_V33Q) (extraction code: fapn). 
-
-1. Training Configuration:
-
-    + After you download training dataset, just run `train.py` to train our model.
-
-
-1. Testing Configuration:
-
-    + After you download all the pre-trained model and testing dataset, just run `test.py` to generate the final prediction maps.
-    
-    + You can also download prediction maps ('CHAMELEON', 'CAMO', 'COD10K') from [Google Drive](https://drive.google.com/file/d/1O5gDTBasHWuwPv4hxd04Nt08y16_Y578/view?usp=sharing) or [Baidu Drive](https://pan.baidu.com/s/1nltTLWnU3YZpCQO5LewAIw) (extraction code: fapn)).
-
-    + You can also download prediction maps (NC4K) from [Google Drive](https://drive.google.com/file/d/139CoLtoQp_9n3T8WXc2G8xI61MJj_bpj/view?usp=share_link) or [Baidu Drive](https://pan.baidu.com/s/1iGcAAnFjbav-HLoG7Dc_FA) (extraction code: fapn)).
-
-### 3.2 Evaluating your trained model:
-
-One evaluation is written in MATLAB code ([link](https://github.com/DengPingFan/CODToolbox)), 
-please follow this the instructions in `./eval/main.m` and just run it to generate the evaluation results in.
-
-Alternatively, use the built-in Python evaluator:
-
-```bash
-python evaluate_cod.py --pred_root ./results --label original --output metrics.json
+```text
+FAPNet/
+├── lib/
+│   ├── model.py                 # FAPNet architecture and MFAM variants
+│   └── Res2Net_v1b.py           # Original/legacy backbone implementation
+├── utils/
+│   ├── checkpoint.py            # Checkpoint loading and variant validation
+│   ├── dataloader.py            # Training and testing data loaders
+│   ├── eva_funcs.py             # S/E/wF/MAE metric implementation
+│   └── trainer.py               # Learning-rate utilities
+├── tests/
+│   └── test_mfam_variants.py    # Variant shape, compatibility, and gradient tests
+├── ui/
+│   ├── src/                     # React visualization components
+│   ├── public/samples/          # Bundled demonstration images
+│   ├── package.json
+│   └── vite.config.js           # Vite server and /api proxy
+├── imgs/                        # README architecture and result images
+├── Snapshot/                    # Generated training logs and snapshots
+├── train.py                     # Model training and resuming
+├── test.py                      # Dataset prediction generation
+├── evaluate_cod.py              # Python metric evaluation
+├── benchmark_model.py           # Parameter, FLOP, latency, and memory benchmark
+├── server.py                    # Local HTTP inference server
+├── build_full_paper.py          # Research-paper generation utility
+├── FAPNet_Research_Paper_IEEE_TAI.docx
+├── benchmark and metrics files
+├── requirements.txt             # Data, vision, and numerical dependencies
+├── requirement.txt              # Original historical pins (not recommended)
+└── SETUP_NOTES.md               # Environment and known setup notes
 ```
 
-## 3.3 Efficient MFAM Variants
+Directories such as `data/`, `checkpoints/`, `results/`, `Snapshot/`, `venv/`, and `ui/node_modules/` are generated or locally supplied and are excluded by `.gitignore`.
 
-FAP-Net's MFAM has four branch spatial convolutions (two 3x3, two 5x5). `--mfam_variant` swaps only those four; the branch/fusion topology, the post-fusion 3x3 (`conv_1_5`), feature dimensions and the five-output contract are unchanged.
+## Environment Setup
 
-| variant | 3x3 branches | 5x5 branches | spatial-op params per MFAM (64 ch)* |
-|---|---|---|---|
-| `original` (default) | standard 3x3 | standard 5x5 | 278,784 |
-| `depthwise` | depthwise 3x3 + 1x1 pointwise | depthwise 5x5 + 1x1 pointwise | 20,992 |
-| `dilated` | standard 3x3 | standard 3x3, dilation 2 | 147,712 |
-| `factorized` | standard 3x3 | 1x5 then 5x1 | 155,904 |
-| `combined` | depthwise-separable 3x3 | depthwise-separable 3x3, dilation 2 | 18,944 |
+The current setup is tested on **Windows, Python 3.9, PyTorch 1.13.1, CUDA 11.7, and an NVIDIA GPU**. CPU execution is possible for model tests and benchmarking, but training and live inference are designed for CUDA.
 
-\*Arithmetic for the four replaced convs only (independent of input channels); multiply by 5 for rf1..rf5. Confirm with `benchmark_model.py`.
+Create a virtual environment:
 
-```bash
-# train (same seed/batch size/epochs for every variant); output goes to ./Snapshot/FAPNet_<variant>/
-python train.py --mfam_variant depthwise --seed 42 --batchsize 32
-# predictions -> ./results_<variant>/<DATASET>/
-python test.py --mfam_variant depthwise --model_path ./Snapshot/FAPNet_depthwise/FAPNet_best.pth
-# metrics per dataset (S, E mean/max/adaptive, weighted F, MAE)
-python evaluate_cod.py --pred_root ./results_depthwise --label depthwise --output metrics_depthwise.json
-# efficiency (params, FLOPs @352, latency/FPS, peak GPU memory)
-python benchmark_model.py --output bench.json
-# inference server
-# MFAM_VARIANT=depthwise MODEL_PATH=Snapshot/FAPNet_depthwise/checkpoint_best.pth python server.py
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
 ```
 
-Run tests with `python -m pytest tests -q`.
+Install a matching PyTorch/torchvision build first:
 
-## 4. Citation
+```powershell
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
+pip install -r requirements.txt
+```
 
-Please cite our paper if you find the work useful, thanks!
-	
-	@article{zhou2022feature,
-	   title={Feature Aggregation and Propagation Network for Camouflaged Object Detection},
-	   author={Zhou, Tao and Zhou, Yi and Gong, Chen and Yang, Jian and Zhang, Yu},
-	   journal={IEEE Transactions on Image Processing},
-	   volume={31},
-	   pages={7036--7047},
-	   year={2022},
-	   publisher={IEEE}
-	}
+For systems without a compatible NVIDIA GPU, use the CPU build supported by the installed PyTorch release instead.
 
+## Dataset Layout
 
+Download the training and test datasets separately and arrange them as follows:
 
-**[⬆ back to top](#1-preface)**
+```text
+data/
+└── TestDataset/
+    └── TestDataset/
+        ├── CAMO/
+        │   ├── Imgs/
+        │   └── GT/
+        ├── CHAMELEON/
+        │   ├── Imgs/
+        │   └── GT/
+        └── COD10K/
+            ├── Imgs/
+            └── GT/
+```
+
+Training is configured for this layout:
+
+```text
+data/TrainDataset/Imgs/
+data/TrainDataset/GT/
+data/TrainDataset/Edge/
+```
+
+The script also recognizes the nested `data/TrainDataset/TrainDataset/...` layout. Edge maps are required for the training loss. If the downloaded training dataset does not include `Edge/`, generate edge maps from the ground-truth masks before training.
+
+The repository does not include datasets or model checkpoints.
+
+## Training
+
+Train the original MFAM variant:
+
+```powershell
+python train.py --epoch 200 --batchsize 32 --trainsize 352 --lr 0.0001 --mfam_variant original --seed 42
+```
+
+Train another variant:
+
+```powershell
+python train.py --epoch 200 --batchsize 32 --trainsize 352 --mfam_variant depthwise --seed 42
+```
+
+Supported variants:
+
+```text
+original
+depthwise
+dilated
+```
+
+Snapshots are written to:
+
+- `Snapshot/FAPNet/` for `original`
+- `Snapshot/FAPNet_<variant>/` for other variants
+
+Useful training options include `--resume`, `--start_epoch`, `--amp`, `--num_workers`, `--save_model`, `--train_img_dir`, `--train_gt_dir`, and `--train_eg_dir`. Run `python train.py --help` for the complete list.
+
+## Testing
+
+Generate prediction maps:
+
+```powershell
+python test.py --model_path .\Snapshot\FAPNet\FAPNet_best.pth --mfam_variant original --testsize 352 --save_path .\results
+```
+
+The default data root is `data/TestDataset/TestDataset`, and the default datasets are `CHAMELEON`, `CAMO`, and `COD10K`. Override them when needed:
+
+```powershell
+python test.py --data_root .\data\TestDataset\TestDataset --datasets CAMO CHAMELEON COD10K
+```
+
+Prediction masks are saved under `<save_path>/<DATASET>/`.
+
+## Evaluation
+
+Evaluate saved predictions:
+
+```powershell
+python evaluate_cod.py --pred_root .\results --gt_root .\data\TestDataset\TestDataset --datasets CAMO CHAMELEON COD10K --label original --output metrics_original.json
+```
+
+This reports S-measure, mean/max/adaptive E-measure, weighted F-measure, and MAE. The script writes both JSON and CSV output.
+
+## Efficiency Benchmark
+
+Benchmark every MFAM variant at 352 × 352:
+
+```powershell
+python benchmark_model.py --size 352 --output bench.json
+```
+
+Benchmark one or more variants:
+
+```powershell
+python benchmark_model.py --variants original depthwise --device cuda --output bench_depthwise.json
+python benchmark_model.py --device cpu --output bench_cpu.json
+```
+
+The benchmark reports total and MFAM-only parameters, FLOPs, latency, FPS, and peak GPU memory. The repository includes benchmark JSON/CSV runs from the development environment.
+
+## Local Web Interface
+
+Start the Python inference server:
+
+```powershell
+$env:MODEL_PATH = "Snapshot/FAPNet/checkpoint_best.pth"
+$env:MFAM_VARIANT = "original"
+python server.py
+```
+
+The server listens on `http://127.0.0.1:8000`.
+
+In a second terminal, start the React UI:
+
+```powershell
+cd ui
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. The Vite development server proxies `/api/*` to the Python server on port 8000.
+
+If no matching checkpoint is available, the server remains online and the UI falls back to client-side edge saliency.
+
+## Checkpoint Compatibility
+
+Checkpoints are validated against the requested MFAM variant. A raw state dict is checked from its tensor shapes, while full checkpoints also include `mfam_variant` metadata and are accompanied by `run_config.json` for snapshots created by `train.py`.
+
+Use the same variant for loading and inference:
+
+```powershell
+python test.py --mfam_variant depthwise --model_path .\Snapshot\FAPNet_depthwise\FAPNet_best.pth
+```
+
+Do not use an original/checkpoint and an alternative MFAM variant interchangeably.
+
+## Tests
+
+Run the CPU-compatible variant tests:
+
+```powershell
+python -m pytest tests -q
+```
+
+The tests cover output shapes, gradients, invalid variants, variant parameter efficiency, state-dict compatibility, mismatch detection, and checkpoint metadata.
+
+## Recorded Experimental Metrics
+
+The repository includes the following 10-epoch `original`/baseline evaluation from `metrics_epoch10.json`:
+
+| Dataset | Images | S-measure ↑ | E-mean ↑ | E-max ↑ | E-adaptive ↑ | Weighted F ↑ | MAE ↓ |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| CAMO | 250 | 0.8080 | 0.8562 | 0.8818 | 0.8711 | 0.7090 | 0.0792 |
+| CHAMELEON | 76 | 0.8661 | 0.9129 | 0.9480 | 0.8974 | 0.7604 | 0.0379 |
+| COD10K | 2,026 | 0.7983 | 0.8623 | 0.8860 | 0.8441 | 0.6373 | 0.0429 |
+
+The repository also contains `metrics_original.json`, which reports a separate original-variant run. Model-quality comparisons for all three variants should use consistently trained checkpoints and the same evaluation command; this README does not invent missing variant metrics.
+
+## Citation
+
+This project is based on the original FAP-Net research. Please cite it when using or building upon the implementation:
+
+```bibtex
+@article{zhou2022feature,
+  title={Feature Aggregation and Propagation Network for Camouflaged Object Detection},
+  author={Zhou, Tao and Zhou, Yi and Gong, Chen and Yang, Jian and Zhang, Yu},
+  journal={IEEE Transactions on Image Processing},
+  volume={31},
+  pages={7036--7047},
+  year={2022},
+  doi={10.1109/TIP.2022.3217695}
+}
+```
