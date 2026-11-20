@@ -1,0 +1,73 @@
+{
+  "hardware": {
+    "device": "cuda",
+    "torch": "1.13.1+cu117",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "gpu": "NVIDIA GeForce GTX 1650"
+  },
+  "input_size": 352,
+  "warmup": 20,
+  "iters": 100,
+  "results": [
+    {
+      "variant": "original",
+      "params_total": 31714774,
+      "params_mfam": 1974656,
+      "flops_total": 56921993216,
+      "flops_mfam": 12193144832,
+      "latency_ms_mean": 48.35674449920654,
+      "latency_ms_median": 48.37215995788574,
+      "latency_ms_std": 0.18233485568771216,
+      "fps": 20.679638597598487,
+      "peak_gpu_mem_mb": 225.84033203125
+    },
+    {
+      "variant": "depthwise",
+      "params_total": 30425814,
+      "params_mfam": 685696,
+      "flops_total": 47626529280,
+      "flops_mfam": 2897680896,
+      "latency_ms_mean": 44.81512119293213,
+      "latency_ms_median": 44.711952209472656,
+      "latency_ms_std": 0.9253084332821765,
+      "fps": 22.313897037005262,
+      "peak_gpu_mem_mb": 220.92822265625
+    },
+    {
+      "variant": "dilated",
+      "params_total": 31059414,
+      "params_mfam": 1319296,
+      "flops_total": 52195799040,
+      "flops_mfam": 7466950656,
+      "latency_ms_mean": 46.55248729705811,
+      "latency_ms_median": 46.571950912475586,
+      "latency_ms_std": 0.22865589571054723,
+      "fps": 21.481129324387254,
+      "peak_gpu_mem_mb": 223.98095703125
+    },
+    {
+      "variant": "factorized",
+      "params_total": 31101014,
+      "params_mfam": 1360896,
+      "flops_total": 52491186176,
+      "flops_mfam": 7762337792,
+      "latency_ms_mean": 47.344342384338375,
+      "latency_ms_median": 47.32313537597656,
+      "latency_ms_std": 0.2558672149798467,
+      "fps": 21.121847926032288,
+      "peak_gpu_mem_mb": 222.12255859375
+    },
+    {
+      "variant": "combined",
+      "params_total": 30415574,
+      "params_mfam": 675456,
+      "flops_total": 47552682496,
+      "flops_mfam": 2823834112,
+      "latency_ms_mean": 48.517344589233396,
+      "latency_ms_median": 48.49991989135742,
+      "latency_ms_std": 0.2064742536407517,
+      "fps": 20.611185720619847,
+      "peak_gpu_mem_mb": 220.78759765625
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "hardware": {
+    "device": "cuda",
+    "torch": "1.13.1+cu117",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "gpu": "NVIDIA GeForce GTX 1650"
+  },
+  "input_size": 352,
+  "warmup": 20,
+  "iters": 100,
+  "results": [
+    {
+      "variant": "original",
+      "params_total": 31714774,
+      "params_mfam": 1974656,
+      "flops_total": null,
+      "flops_mfam": null,
+      "flops_error": "No module named 'torch.utils.flop_counter'",
+      "latency_ms_mean": 48.98655059814453,
+      "latency_ms_median": 48.29862403869629,
+      "latency_ms_std": 5.141337607687928,
+      "fps": 20.413766386684046,
+      "peak_gpu_mem_mb": 225.84033203125
+    },
+    {
+      "variant": "depthwise",
+      "params_total": 30425814,
+      "params_mfam": 685696,
+      "flops_total": null,
+      "flops_mfam": null,
+      "flops_error": "No module named 'torch.utils.flop_counter'",
+      "latency_ms_mean": 45.00088329315186,
+      "latency_ms_median": 44.57494354248047,
+      "latency_ms_std": 3.3276876301605576,
+      "fps": 22.221786036634928,
+      "peak_gpu_mem_mb": 220.92822265625
+    },
+    {
+      "variant": "dilated",
+      "params_total": 31059414,
+      "params_mfam": 1319296,
+      "flops_total": null,
+      "flops_mfam": null,
+      "flops_error": "No module named 'torch.utils.flop_counter'",
+      "latency_ms_mean": 47.08633556365967,
+      "latency_ms_median": 46.53097724914551,
+      "latency_ms_std": 3.9050637098155168,
+      "fps": 21.237583855894297,
+      "peak_gpu_mem_mb": 223.98095703125
+    },
+    {
+      "variant": "factorized",
+      "params_total": 31101014,
+      "params_mfam": 1360896,
+      "flops_total": null,
+      "flops_mfam": null,
+      "flops_error": "No module named 'torch.utils.flop_counter'",
+      "latency_ms_mean": 47.36688446044922,
+      "latency_ms_median": 47.29417610168457,
+      "latency_ms_std": 0.420904458777377,
+      "fps": 21.111795960213257,
+      "peak_gpu_mem_mb": 222.12255859375
+    },
+    {
+      "variant": "combined",
+      "params_total": 30415574,
+      "params_mfam": 675456,
+      "flops_total": null,
+      "flops_mfam": null,
+      "flops_error": "No module named 'torch.utils.flop_counter'",
+      "latency_ms_mean": 48.439831771850585,
+      "latency_ms_median": 48.409793853759766,
+      "latency_ms_std": 0.22514438195490238,
+      "fps": 20.644167484105946,
+      "peak_gpu_mem_mb": 220.78759765625
+    }
+  ]
+}

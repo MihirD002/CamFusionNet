@@ -87,7 +87,40 @@ The training and testing experiments are conducted using [PyTorch](https://githu
 One evaluation is written in MATLAB code ([link](https://github.com/DengPingFan/CODToolbox)), 
 please follow this the instructions in `./eval/main.m` and just run it to generate the evaluation results in.
 
+Alternatively, use the built-in Python evaluator:
 
+```bash
+python evaluate_cod.py --pred_root ./results --label original --output metrics.json
+```
+
+## 3.3 Efficient MFAM Variants
+
+FAP-Net's MFAM has four branch spatial convolutions (two 3x3, two 5x5). `--mfam_variant` swaps only those four; the branch/fusion topology, the post-fusion 3x3 (`conv_1_5`), feature dimensions and the five-output contract are unchanged.
+
+| variant | 3x3 branches | 5x5 branches | spatial-op params per MFAM (64 ch)* |
+|---|---|---|---|
+| `original` (default) | standard 3x3 | standard 5x5 | 278,784 |
+| `depthwise` | depthwise 3x3 + 1x1 pointwise | depthwise 5x5 + 1x1 pointwise | 20,992 |
+| `dilated` | standard 3x3 | standard 3x3, dilation 2 | 147,712 |
+| `factorized` | standard 3x3 | 1x5 then 5x1 | 155,904 |
+| `combined` | depthwise-separable 3x3 | depthwise-separable 3x3, dilation 2 | 18,944 |
+
+\*Arithmetic for the four replaced convs only (independent of input channels); multiply by 5 for rf1..rf5. Confirm with `benchmark_model.py`.
+
+```bash
+# train (same seed/batch size/epochs for every variant); output goes to ./Snapshot/FAPNet_<variant>/
+python train.py --mfam_variant depthwise --seed 42 --batchsize 32
+# predictions -> ./results_<variant>/<DATASET>/
+python test.py --mfam_variant depthwise --model_path ./Snapshot/FAPNet_depthwise/FAPNet_best.pth
+# metrics per dataset (S, E mean/max/adaptive, weighted F, MAE)
+python evaluate_cod.py --pred_root ./results_depthwise --label depthwise --output metrics_depthwise.json
+# efficiency (params, FLOPs @352, latency/FPS, peak GPU memory)
+python benchmark_model.py --output bench.json
+# inference server
+# MFAM_VARIANT=depthwise MODEL_PATH=Snapshot/FAPNet_depthwise/checkpoint_best.pth python server.py
+```
+
+Run tests with `python -m pytest tests -q`.
 
 ## 4. Citation
 

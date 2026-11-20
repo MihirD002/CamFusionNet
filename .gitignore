@@ -9,3 +9,8 @@ ui/dist/
 __pycache__/
 *.pyc
 /results_epoch10
+*.pth
+Snapshot/
+checkpoints/
+*.log
+
